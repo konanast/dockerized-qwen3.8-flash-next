@@ -1,0 +1,76 @@
+name: engramhalo-strix-halo
+
+services:
+  model-setup:
+    build:
+      context: .
+      args:
+        ENGRAMHALO_REF: ${ENGRAMHALO_REF:-15176583b358d791b7a73f210ef4ab9e167cfba7}
+    image: engramhalo-strix-halo:${IMAGE_TAG:-2026-09-16-quant-select}
+    environment:
+      DOWNLOAD_MODEL: ${DOWNLOAD_MODEL:-true}
+      ENABLE_VISION: ${ENABLE_VISION:-false}
+      HF_TOKEN: ${HF_TOKEN:-}
+      MODEL_OWNER_GID: ${MODEL_OWNER_GID:-1000}
+      MODEL_OWNER_UID: ${MODEL_OWNER_UID:-1000}
+      MODEL_QUANT: ${MODEL_QUANT:-UD-IQ4_XS}
+      VERIFY_DOWNLOADS: ${VERIFY_DOWNLOADS:-true}
+    user: "0:0"
+    command: ["/opt/engramhalo/bin/model-setup.sh"]
+    volumes:
+      - ${MODEL_DIR:-./models}:/models
+      - ${HF_CACHE_DIR:-./cache/huggingface}:/cache/huggingface
+    restart: "no"
+
+  api:
+    image: engramhalo-strix-halo:${IMAGE_TAG:-2026-09-16-quant-select}
+    build:
+      context: .
+      args:
+        ENGRAMHALO_REF: ${ENGRAMHALO_REF:-15176583b358d791b7a73f210ef4ab9e167cfba7}
+    environment:
+      API_KEY: ${API_KEY:?Run ./scripts/init-env.sh or set API_KEY in .env}
+      BATCH_SIZE: ${BATCH_SIZE:-8192}
+      CONTEXT_SIZE: ${CONTEXT_SIZE:-65536}
+      CPU_THREADS: ${CPU_THREADS:-4}
+      DEDICATED_CONTEXT_SIZE: ${DEDICATED_CONTEXT_SIZE:-32768}
+      ENABLE_VISION: ${ENABLE_VISION:-false}
+      GPU_LAYERS: ${GPU_LAYERS:-999}
+      KV_CACHE_TYPE: ${KV_CACHE_TYPE:-q8_0}
+      MODEL_ALIAS: ${MODEL_ALIAS:-qwen3.8-flash-next}
+      MODEL_QUANT: ${MODEL_QUANT:-UD-IQ4_XS}
+      PARALLEL_SLOTS: ${PARALLEL_SLOTS:-1}
+      PERFORMANCE_PROFILE: ${PERFORMANCE_PROFILE:-balanced}
+      SPEC_DRAFT_N_MAX: ${SPEC_DRAFT_N_MAX:-4}
+      SPEC_DRAFT_P_MIN: ${SPEC_DRAFT_P_MIN:-0.75}
+      UBATCH_SIZE: ${UBATCH_SIZE:-2048}
+    command: ["/opt/engramhalo/bin/start-server.sh"]
+    depends_on:
+      model-setup:
+        condition: service_completed_successfully
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
+    security_opt:
+      - seccomp=unconfined
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ${MODEL_DIR:-./models}:/models:ro
+      - ${HF_CACHE_DIR:-./cache/huggingface}:/cache/huggingface:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8080}:8080"
+    init: true
+    stop_grace_period: 2m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 15m
