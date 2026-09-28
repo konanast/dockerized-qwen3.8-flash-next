@@ -28,10 +28,14 @@ getent group video
 getent group render
 ```
 
-For a 128 GiB machine, a practical upper bound is a 96 GiB GTT aperture while the default `balanced` profile is intended to coexist with other models. This is an addressable ceiling, not a physical reservation or a guarantee that 32 GiB remains free. Add these kernel parameters to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`, then update GRUB and reboot:
+For a 128 GiB machine, a practical upper bound is a 96 GiB GTT or 124 GiB GTT aperture while the default `balanced` profile is intended to coexist with other models. This is an addressable ceiling, not a physical reservation or a guarantee that 32 GiB or 4 GiB remains free. Add these kernel parameters to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`, then update GRUB and reboot:
 
 ```text
+- 96 GiB
 amdgpu.gttsize=98304 ttm.pages_limit=25165824
+
+- 124 GiB
+amdgpu.gttsize=126976 ttm.pages_limit=32505856
 ```
 
 Do not apply the 124 GiB GTT profile described below if you intend to co-host other models. GTT is a maximum aperture, not a guaranteed reservation, but system-wide unified-memory pressure still matters. Confirm the active values after reboot:
@@ -136,25 +140,8 @@ The pinned EngramHalo benchmark does not contain a same-hardware `UD-Q4_K_XL` re
 
 In the default balanced profile, expect the larger target to reduce the previously estimated 35-40 GiB of spare unified memory by roughly 16 GiB, leaving approximately 19-24 GiB under comparable workload conditions. That is still useful for Whisper and Kokoro, but it is materially tighter for ACE-Step or several simultaneous services. Actual free memory depends on context depth, page cache, vision use, and ROCm allocations.
 
-### Migrate from an earlier package
 
-Earlier releases used the `engramhalo-models` and `engramhalo-hf-cache` Docker named volumes. Stop the old deployment and copy their contents into the new host directories:
-
-```bash
-docker compose down
-./scripts/migrate-storage.sh
-docker compose up -d
-```
-
-The migration refuses to copy from a volume that is still in use, refuses a non-empty destination unless `--merge` is explicitly supplied, verifies every copied file's size, and retains the source volumes for rollback. If the old model volume is empty or absent, the script reports that and the normal setup downloads directly into `MODEL_DIR`.
-
-After checking `docker compose ps` and confirming the files under `./models`, you may manually remove the old volumes:
-
-```bash
-docker volume rm engramhalo-models engramhalo-hf-cache
-```
-
-Monitor startup and health:
+## Monitor startup and health:
 
 ```bash
 docker compose logs -f api
@@ -293,53 +280,6 @@ docker compose logs api 2>&1 | grep 'Starting PERFORMANCE_PROFILE'
 - If lazy loading hangs with a host setup that enables XNACK, change `--lazy-mode on` to `--lazy-mode off` in `scripts/start-server.sh`; keep mmap enabled. The upstream fork documents this as a host-specific fallback.
 - Avoid Docker `mem_limit` for this container. ROCm allocations share physical memory with the CPU and a cgroup cap can cause misleading GPU allocation failures.
 - Stop this service before launching a combination of additional models that would push total resident memory near 128 GiB.
-
-## Updates and cleanup
-
-Pins are intentional. Review EngramHalo release notes and test before changing `ENGRAMHALO_REF`, model revisions, or ROCm packages.
-
-To stop without deleting downloaded models:
-
-```bash
-docker compose down
-```
-
-The model and cache bind directories are not deleted by `docker compose down`, including with `--volumes`. Back up or remove `MODEL_DIR` and `HF_CACHE_DIR` explicitly when you intend to delete their contents.
-
-## Publish safely on GitHub
-
-The repository includes a comprehensive `.gitignore` for local environment
-files, credentials, model weights, caches, logs, build output, archives, editor
-state, and machine-specific Compose overrides. `.env.example` is explicitly
-kept as the public, secret-free configuration template. `.dockerignore` applies
-the same protection to the Docker build context.
-
-Before the first push, verify the exact staged files:
-
-```bash
-git init
-git add .
-git status --short
-git diff --cached --check
-git grep -nEi '(api[_-]?key|token|secret|password|BEGIN [A-Z ]*PRIVATE KEY)' -- ':!README.md' ':!.env.example'
-```
-
-Expected tracked configuration includes `.env.example`; it must not include
-`.env`, `models/`, `cache/`, model weights, archives, private keys, or local
-Compose overrides. Confirm the most important exclusions directly:
-
-```bash
-git check-ignore -v .env models/example.gguf cache/huggingface/token
-```
-
-The repository also includes `.gitattributes` to keep shell scripts and
-configuration files on LF line endings across Linux, macOS, and Windows clones.
-
-If a real secret was ever committed, removing it from the latest commit is not
-enough: rotate the credential and remove it from Git history before publishing.
-Choose and add a repository license before public release if you want others to
-reuse this project's own scripts; the upstream model and source licenses remain
-separate and must still be followed.
 
 ## Verified upstream references
 
